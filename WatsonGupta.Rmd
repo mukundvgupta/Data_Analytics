@@ -1,0 +1,177 @@
+---
+title: "Appendix"
+author: "Garrett Watson; Mukund Gupta"
+date: "2023-03-21"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Part a) Description of the final model
+The best model of fit identified from our analysis is the Bayesian Additive Regression Trees (BART), which uses the reduced variables identified in the Lasso reduction model to predict the RMSE values. The BART RMSE values for the in-sample and out-of-sample analysis are 205.90 and 423.10, respectively. The data was split into training and test; in the ration of 70/30, respectively. The variables considered are as follows: Dependent Variable: res.sales.adj... Predictors: month, res.price, EMXT, EMNT, MMXT, DT90, DT32, DP05, WDSP, GUST, HTDD, CLDD, UNEMP, UNEMPRATE, PCINCOME.
+
+
+Random Forest was a close second for a best-fit model, with an out-of-sample RMSE of 437.67. Ideally, we would want Random Forest to perform better than BART (because Random Forest gives more accurate predictions), but from the exploratory data analysis, it looked like there was a high correlation between the variables and possibly non-linear relationships. BART seems to perform better with the current data set in the 70/30 split, which makes us believe that even after variable selection performed using LASSO regression, there is still a complex non-linear relationship among the variables.  
+
+
+#BART Equation 
+Y = f(X) + E ≈ T1M(X) + T2M(X) + . . . + TmM (X) + E,   E ∼ Nn(0, σ2In)
+
+#Code for Final Model
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(corrplot)
+library(ranger)
+library(caret)
+library(data.table)
+library(caTools)
+library(rpart)
+library(rpart.plot)
+library(gbm, quietly=TRUE)
+library(pROC)
+library(ggplot2)
+library(reshape2)
+library(leaps)
+library(ggcorrplot)
+library(FactoMineR)
+library(psych)
+library(factoextra)
+
+
+#loading the dataset
+energy_data <- read.csv("energy_training.csv")
+
+# check for missing values
+colSums(is.na(energy_data)) # no null value is reported
+
+#using the str() function to get an overview of the structure of the dataset:
+str(energy_data)
+
+#Using summary function to get a summary statistics of all variables 
+summary(energy_data)
+
+#Plotting histogram for all numeric data
+energy_data %>%
+  select_if(is.numeric) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_histogram() +
+  facet_wrap(~variable, scales = "free")
+
+## looking at the histogram we can make the following observations:
+table(energy_data$DT00)
+table(energy_data$MXSD)
+table(energy_data$TSNW)
+table(energy_data$DX32)
+### DT00 (Number days in a month with minimum temperature ≤ 0 °F has most of it's value as 0, with only 3 unique values. This questions the use of  the variable in our analysis. Same is the case with MXSD and TSNW)
+
+# Dropping columns with most of the values equal to zero.
+energy_data <- energy_data[, -which(names(energy_data) %in% c("DT00", "MXSD", "TSNW", "DX32"))]
+
+
+#Plotting Box Plot for all numeric data
+energy_data %>%
+  select_if(is.numeric) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(x = value)) +
+  geom_boxplot() +
+  facet_wrap(~variable, scales = "free")
+## DT32 seems to have a lot of values above the 3rd Quartile. We might have to look at ways to deal with it
+
+# calculate the correlation matrix
+cor(energy_data)
+
+# Load the ggcorrplot package
+
+# Create a correlation plot as a heatmap
+ggcorrplot(cor(energy_data), 
+           hc.order = TRUE, 
+           type = "lower", 
+           lab = TRUE, 
+           lab_size = 3, 
+           colors = c("#6D9EC1", "#FFFFFF", "#E46726"), 
+           title = "Correlation Matrix Heatmap",
+           ggtheme = ggplot2::theme_gray)
+
+
+## We can clearly see that there is high correlation between some variables. This will have to be treated before model building
+
+#Checking class of every variable
+sapply(energy_data, class)
+
+dim(energy_data)
+
+# Lasso regression has been used for dimension reduction as well as for removing the high correlation in the data.
+
+# Splitting the data into training and test in the ratio of 70/30
+train <-  sample(1:nrow(energy_data), 0.7* nrow(energy_data))
+test <- (-train)
+
+# BART model has been chosen as it performs the best.
+# Bayesian Additive Regression Trees
+library(BART)
+
+x <- energy_data[, -which(names(energy_data) %in% c("res.sales.adj", "year", "EXMP",
+                                                    "TPCP","MMNT","MNTM", "DP01","DP10",
+                                                    "MDPT", "VISIB", "LABOR", "GSP", "EMP",
+                                                    "MWSPD"))]
+y <- energy_data[,"res.sales.adj"]
+xtrain <- x[train,]
+ytrain <- y[train]
+xtest <- x[-train,]
+ytest <- y[-train]
+
+set.seed(1)
+#train
+bartfit.train <- gbart(xtrain,ytrain,x.test = xtrain)
+yhat.bart.train <- bartfit.train$yhat.train.mean
+in_sample_mse_bart <- mean((ytrain-yhat.bart.train )^2)
+in_sample_rmse_bart <- sqrt(in_sample_mse_bart)
+in_sample_rmse_bart
+
+# Test
+bartfit <- gbart(xtrain,ytrain,x.test = xtest)
+yhat.bart <- bartfit$yhat.test.mean
+out_sample_mse_bart <- mean((ytest-yhat.bart )^2)
+out_sample_rmse_bart <- sqrt(out_sample_mse_bart)
+out_sample_rmse_bart
+
+```
+
+#Figures
+```{r}
+# In-Sample Create plot
+plot(ytrain, yhat.bart.train, col="blue", pch=20, xlab="res.sales.adj", ylab="Predicted sales")
+
+# Add diagonal line
+abline(a=0, b=1, col="red")
+
+# Add title and legend
+title("In-sample predicted vs actual")
+legend("topleft", legend="BART", col="blue", pch=20)
+
+
+# Out-of-Sample Create plot
+plot(ytest, yhat.bart, col="blue", pch=20, xlab="Actual sales", ylab="Predicted sales")
+
+# Add diagonal line
+abline(a=0, b=1, col="red")
+
+# Add title and legend
+title("Out-of-sample predicted vs actual")
+legend("topleft", legend="BART", col="blue", pch=20)
+
+```
+
+#Table has been attached separately as a PDF document, we were having trouble outputting it in Rmarkdown.
+
+#Additionally, we also tried exploring models with reduced dimensions through variable reduction techniques, such as, Lasso regression, Ridge regression, and PCA. 
+
+#COMMENTS
+We are not sure that the final fitted model that we have saved as .Rdatafile as requested will work since we have explicitly split the data into training and test sets and the out-of-sample in the final model is determined on the testing set. Hence, we will attach the .Rfile as well so that you can run the code appropriately.
